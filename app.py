@@ -1,67 +1,69 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 import requests
 from bs4 import BeautifulSoup
+from difflib import get_close_matches  # For fuzzy matching
 
 app = FastAPI()
 
-# URLs for PSX data
 PSX_MARKET_URL = "https://dps.psx.com.pk/market-watch"
 PSX_SYMBOLS_URL = "https://dps.psx.com.pk/symbols"
 
+def fetch_market_data():
+    response = requests.get(PSX_MARKET_URL, headers={"User-Agent": "Mozilla/5.0"})
+    soup = BeautifulSoup(response.content, "html.parser")
+    
+    table = soup.find("table")
+    rows = table.find_all("tr")[1:]
+
+    stock_data = {}
+    
+    for row in rows:
+        cols = [col.text.strip() for col in row.find_all("td")]
+        if len(cols) >= 11:
+            symbol = cols[0]  # Stock symbol from market-watch
+            stock_data[symbol] = {
+                "SYMBOL": symbol,
+                "SECTOR": cols[1],
+                "LISTED_IN": cols[2],
+                "LDCP": cols[3],
+                "OPEN": cols[4],
+                "HIGH": cols[5],
+                "LOW": cols[6],
+                "CURRENT": cols[7],
+                "CHANGE": cols[8],
+                "CHANGE_%": cols[9],
+                "VOLUME": cols[10],
+                "NAME": "",  # Default blank value
+                "SECTOR_NAME": "",
+                "IS_ETF": "",
+                "IS_DEBT": ""
+            }
+    
+    return stock_data
+
+def fetch_symbol_data():
+    response = requests.get(PSX_SYMBOLS_URL, headers={"User-Agent": "Mozilla/5.0"})
+    return response.json()
+
+def merge_data():
+    market_data = fetch_market_data()
+    symbol_data = fetch_symbol_data()
+
+    for symbol_info in symbol_data:
+        main_symbol = symbol_info["symbol"]
+        close_matches = get_close_matches(main_symbol, market_data.keys(), n=1, cutoff=0.6)
+
+        if close_matches:
+            matched_symbol = close_matches[0]
+            market_data[matched_symbol].update({
+                "NAME": symbol_info.get("name", ""),
+                "SECTOR_NAME": symbol_info.get("sectorName", ""),
+                "IS_ETF": symbol_info.get("isETF", ""),
+                "IS_DEBT": symbol_info.get("isDebt", "")
+            })
+
+    return {"stocks": list(market_data.values())}
+
 @app.get("/psx-data")
 def fetch_psx_data():
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-
-        # Fetch market data (live stock prices)
-        market_response = requests.get(PSX_MARKET_URL, headers=headers, timeout=10)
-        market_response.raise_for_status()
-        soup = BeautifulSoup(market_response.content, "html.parser")
-
-        # Find stock table
-        table = soup.find("table")
-        if not table:
-            raise HTTPException(status_code=500, detail="Market data table not found on PSX website.")
-
-        rows = table.find_all("tr")[1:]  # Skip header row
-        stock_data = {}
-
-        # Extract market data
-        for row in rows:
-            cols = [col.text.strip() for col in row.find_all("td")]
-            if len(cols) >= 11:
-                symbol = cols[0]  # SYMBOL
-                stock_data[symbol] = {
-                    "SYMBOL": symbol,
-                    "SECTOR": cols[1],
-                    "LISTED_IN": cols[2],
-                    "LDCP": cols[3],
-                    "OPEN": cols[4],
-                    "HIGH": cols[5],
-                    "LOW": cols[6],
-                    "CURRENT": cols[7],
-                    "CHANGE": cols[8],
-                    "CHANGE_%": cols[9],
-                    "VOLUME": cols[10]
-                }
-
-        # Fetch company details
-        symbols_response = requests.get(PSX_SYMBOLS_URL, headers=headers, timeout=10)
-        symbols_response.raise_for_status()
-        company_details = symbols_response.json()
-
-        # Merge company details with market data
-        for company in company_details:
-            symbol = company["symbol"]
-            if symbol in stock_data:
-                stock_data[symbol].update({
-                    "NAME": company["name"],
-                    "SECTOR_NAME": company["sectorName"],
-                    "IS_ETF": company["isETF"],
-                    "IS_DEBT": company["isDebt"]
-                })
-
-        return {"stocks": list(stock_data.values())}
-
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
+    return merge_data()
