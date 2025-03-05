@@ -168,6 +168,18 @@ threading.Thread(target=update_psx_data, daemon=True).start()
 def fetch_psx_data():
     return get_data_from_db()
 
+@app.get("/psx-last-updated")
+def get_last_updated():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
+    last_updated = cursor.fetchone()[0]
+
+    conn.close()
+    return {"last_updated": last_updated}
+
+
 @app.get("/psx-live")
 def fetch_psx_live():
     conn = sqlite3.connect(DB_NAME)
@@ -203,6 +215,8 @@ def fetch_psx_live():
         "last_updated": last_updated,
         "stocks": stocks
     }
+
+  
 
 # === Initialize DB on Startup ===
 init_db()
