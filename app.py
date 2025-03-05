@@ -164,6 +164,28 @@ threading.Thread(target=update_psx_data, daemon=True).start()
 
 # === API Endpoints ===
 
+@app.get("/")
+def root():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    # Fetch last updated timestamp
+    cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
+    last_updated = cursor.fetchone()[0]
+
+    conn.close()
+
+    return {
+        "message": "Welcome to the PSX Stock Data API",
+        "last_updated": last_updated,
+        "endpoints": {
+            "/psx-data": "Get all stock data",
+            "/psx-live": "Get live stock market data",
+            "/psx-last-updated": "Get the last update timestamp"
+        }
+    }
+
+
 @app.get("/psx-data")
 def fetch_psx_data():
     return get_data_from_db()
