@@ -168,16 +168,35 @@ threading.Thread(target=update_psx_data, daemon=True).start()
 def fetch_psx_data():
     return get_data_from_db()
 
-@app.get("/psx-min")
-def fetch_psx_min():
+@app.get("/psx-live")
+def fetch_psx_live():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
     last_updated = cursor.fetchone()[0]
 
-    cursor.execute("SELECT SYMBOL, CURRENT FROM stock_data ORDER BY SYMBOL")
-    stocks = [{"SYMBOL": row[0], "CURRENT": row[1]} for row in cursor.fetchall()]
+    # Fetch required fields from the stock_data table
+    cursor.execute("""
+        SELECT SYMBOL, LDCP, OPEN, HIGH, LOW, CURRENT, CHANGE, CHANGE_PERCENT, VOLUME, NAME
+        FROM stock_data
+        ORDER BY SYMBOL
+    """)
+
+    stocks = []
+    for row in cursor.fetchall():
+        stocks.append({
+            "SMBL": row[0],
+            "NAME": row[9],
+            "OPEN": row[2],
+            "HIGH": row[3],
+            "LOW": row[4],
+            "CURRENT": row[5],
+            "CHNG": row[6],
+            "CHNG_%": row[7],
+            "VOL": row[8],
+            "LDCP": row[1]
+        })
 
     conn.close()
     return {
