@@ -3,6 +3,7 @@ import time
 import requests
 import threading
 from fastapi import FastAPI, Query
+from fastapi.responses import HTMLResponse
 from bs4 import BeautifulSoup
 from difflib import get_close_matches
 from datetime import datetime
@@ -164,26 +165,41 @@ threading.Thread(target=update_psx_data, daemon=True).start()
 
 # === API Endpoints ===
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def root():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     # Fetch last updated timestamp
     cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
-    last_updated = cursor.fetchone()[0]
+    last_updated = cursor.fetchone()[0] or "N/A"
 
     conn.close()
 
-    return {
-        "message": "Welcome to the PSX Stock Data API",
-        "last_updated": last_updated,
-        "endpoints": {
-            "/psx-data": "Get all stock data",
-            "/psx-live": "Get live stock market data",
-            "/psx-last-updated": "Get the last update timestamp"
-        }
-    }
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>PSX Stock Data API</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; text-align: center; padding: 20px; }}
+            h1 {{ color: #007BFF; }}
+            a {{ text-decoration: none; color: #0056b3; font-size: 18px; display: block; margin: 10px 0; }}
+            a:hover {{ color: #003d7a; }}
+        </style>
+    </head>
+    <body>
+        <h1>Welcome to the PSX Stock Data API</h1>
+        <p><strong>Last Updated:</strong> {last_updated}</p>
+        <p> Currently data is delayed for 5 minutes </p>
+        <h2>Available Endpoints:</h2>
+        <a href="/psx-data">📊 Get All Stock Data</a>
+        <a href="/psx-live">📈 Get Live Stock Market Data</a>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html_content)
 
 
 @app.get("/psx-data")
