@@ -151,13 +151,13 @@ def get_data_from_db():
         "stocks": data
     }
 
-# === Background Task: Fetch & Save Data Every Minute ===
+# === Background Task: Fetch & Save Data ===
 def update_psx_data():
     while True:
         stock_data = merge_data()
         save_to_db(stock_data)
         print(f"Updated PSX Data: {datetime.now()}")
-        time.sleep(360)
+        time.sleep(1000)
 
 # === Start Background Task in a Separate Thread ===
 threading.Thread(target=update_psx_data, daemon=True).start()
