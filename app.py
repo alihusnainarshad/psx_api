@@ -254,6 +254,41 @@ def fetch_psx_live():
         "stocks": stocks
     }
 
+# === Fetch Filtered Data from DB ===
+
+@app.get("/filter")
+def filter_stock(symbol: str = Query(..., description="Stock symbol to filter")):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
+    last_updated = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT SYMBOL, LDCP, OPEN, HIGH, LOW, CURRENT, CHANGE, CHANGE_PERCENT, VOLUME, NAME
+        FROM stock_data
+        WHERE SYMBOL = ?
+    """, (symbol,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        stock_data = {
+            "SMBL": row[0],
+            "NAME": row[9],
+            "OPEN": row[2],
+            "HIGH": row[3],
+            "LOW": row[4],
+            "CURRENT": row[5],
+            "CHNG": row[6],
+            "CHNG_%": row[7],
+            "VOL": row[8],
+            "LDCP": row[1]
+        }
+        return {"last_updated": last_updated, "stock": stock_data}
+    else:
+        return {"error": "Stock symbol not found"}
   
 
 # === Initialize DB on Startup ===
