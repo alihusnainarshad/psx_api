@@ -159,10 +159,16 @@ def get_data_from_db():
 # === Background Task: Fetch & Save Data ===
 def update_psx_data():
     while True:
-        # Get current time in PST
+        # Get current time in PKT
         now = datetime.now(PKT)
-        
-        # Define the next update time (Today at 6 PM PST)
+
+        # Fetch data immediately on deployment
+        print("Fetching PSX data on startup...")
+        stock_data = merge_data()
+        save_to_db(stock_data)
+        print(f"Initial PSX Data Updated at: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        # Define the next update time (Today at 6 PM PKT)
         next_update = now.replace(hour=18, minute=0, second=0, microsecond=0)
 
         # If the current time is past 6 PM, schedule it for the next day
@@ -173,12 +179,7 @@ def update_psx_data():
         sleep_time = (next_update - now).total_seconds()
 
         print(f"Next update scheduled at: {next_update.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        time.sleep(sleep_time)  # Sleep until 6 PM PST
-
-        # Update PSX data at 6 PM
-        stock_data = merge_data()
-        save_to_db(stock_data)
-        print(f"Updated PSX Data: {datetime.now(PKT).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        time.sleep(sleep_time)  # Sleep until 6 PM PKT
 
 # === Start Background Task in a Separate Thread ===
 threading.Thread(target=update_psx_data, daemon=True).start()
