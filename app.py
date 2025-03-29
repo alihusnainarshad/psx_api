@@ -6,7 +6,11 @@ from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 from bs4 import BeautifulSoup
 from difflib import get_close_matches
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
+
+# Define Pakistan Standard Time (PST)
+PKT = pytz.timezone("Asia/Karachi")
 
 app = FastAPI()
 
@@ -155,10 +159,26 @@ def get_data_from_db():
 # === Background Task: Fetch & Save Data ===
 def update_psx_data():
     while True:
+        # Get current time in PST
+        now = datetime.now(PKT)
+        
+        # Define the next update time (Today at 6 PM PST)
+        next_update = now.replace(hour=18, minute=0, second=0, microsecond=0)
+
+        # If the current time is past 6 PM, schedule it for the next day
+        if now >= next_update:
+            next_update += timedelta(days=1)
+
+        # Calculate sleep time until next update
+        sleep_time = (next_update - now).total_seconds()
+
+        print(f"Next update scheduled at: {next_update.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        time.sleep(sleep_time)  # Sleep until 6 PM PST
+
+        # Update PSX data at 6 PM
         stock_data = merge_data()
         save_to_db(stock_data)
-        print(f"Updated PSX Data: {datetime.now()}")
-        time.sleep(1400)
+        print(f"Updated PSX Data: {datetime.now(PKT).strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
 # === Start Background Task in a Separate Thread ===
 threading.Thread(target=update_psx_data, daemon=True).start()
@@ -196,6 +216,7 @@ def root():
         <a href="/psx-data">📊 Get All Stock Data</a>
         <a href="/psx-live">📈 Get Live Stock Market Data</a>
         <a href="/filter?symbol=">📊 Get Data By Symbol in URL</a>
+        <p> for example : https://api.ripeinsight.com/filter?symbol=AKDSL </p>
     </body>
     </html>
     """
@@ -266,7 +287,8 @@ def filter_stock(symbol: str = Query(..., description="Stock symbol to filter"))
     last_updated = cursor.fetchone()[0]
 
     cursor.execute("""
-        SELECT SYMBOL, LDCP, OPEN, HIGH, LOW, CURRENT, CHANGE, CHANGE_PERCENT, VOLUME, NAME
+        SELECT SYMBOL, SECTOR, LISTED_IN, LDCP, OPEN, HIGH, LOW, CURRENT, CHANGE, 
+               CHANGE_PERCENT, VOLUME, NAME, SECTOR_NAME, IS_ETF, IS_DEBT, LAST_UPDATED
         FROM stock_data
         WHERE SYMBOL = ?
     """, (symbol,))
@@ -276,18 +298,24 @@ def filter_stock(symbol: str = Query(..., description="Stock symbol to filter"))
 
     if row:
         stock_data = {
-            "SMBL": row[0],
-            "NAME": row[9],
-            "OPEN": row[2],
-            "HIGH": row[3],
-            "LOW": row[4],
-            "CURRENT": row[5],
-            "CHNG": row[6],
-            "CHNG_%": row[7],
-            "VOL": row[8],
-            "LDCP": row[1]
+            "SYMBOL": row[0],
+            "SECTOR": row[1],
+            "LISTED_IN": row[2],
+            "LDCP": row[3],
+            "OPEN": row[4],
+            "HIGH": row[5],
+            "LOW": row[6],
+            "CURRENT": row[7],
+            "CHANGE": row[8],
+            "CHANGE_PERCENT": row[9],
+            "VOLUME": row[10],
+            "NAME": row[11],
+            "SECTOR_NAME": row[12],
+            "IS_ETF": row[13],
+            "IS_DEBT": row[14],
+            "LAST_UPDATED": row[15]
         }
-        return {"last_updated": last_updated, "stock": stock_data}
+        return {"stock": stock_data}
     else:
         return {"error": "Stock symbol not found"}
   
