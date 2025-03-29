@@ -158,7 +158,7 @@ def update_psx_data():
         stock_data = merge_data()
         save_to_db(stock_data)
         print(f"Updated PSX Data: {datetime.now()}")
-        time.sleep(1000)
+        time.sleep(1400)
 
 # === Start Background Task in a Separate Thread ===
 threading.Thread(target=update_psx_data, daemon=True).start()
@@ -191,10 +191,11 @@ def root():
     <body>
         <h1>Welcome to the PSX Stock Data API</h1>
         <p><strong>Last Updated:</strong> {last_updated}</p>
-        <p> Currently data is delayed for 5 minutes </p>
+        <p> Currently data is delayed for 24 hours </p>
         <h2>Available Endpoints:</h2>
         <a href="/psx-data">📊 Get All Stock Data</a>
         <a href="/psx-live">📈 Get Live Stock Market Data</a>
+        <a href="/filter?symbol=">📊 Get Data By Symbol in URL</a>
     </body>
     </html>
     """
