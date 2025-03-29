@@ -107,7 +107,7 @@ def save_to_db(data):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().astimezone(PKT).strftime("%Y-%m-%d %H:%M:%S %Z")
 
     for stock in data.values():
         cursor.execute("""
@@ -145,6 +145,10 @@ def get_data_from_db():
     
     cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
     last_updated = cursor.fetchone()[0]
+
+    # Convert to Pakistan Standard Time
+    if last_updated:
+        last_updated = datetime.strptime(last_updated, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.UTC).astimezone(PKT).strftime("%Y-%m-%d %H:%M:%S %Z")
 
     cursor.execute("SELECT * FROM stock_data ORDER BY SYMBOL")
     columns = [desc[0] for desc in cursor.description]
@@ -212,12 +216,12 @@ def root():
     <body>
         <h1>Welcome to the PSX Stock Data API</h1>
         <p><strong>Last Updated:</strong> {last_updated}</p>
-        <p> Currently data is delayed for 24 hours </p>
+        <p> Data Is Updated Everyday at 6 PM Pakistan Time </p>
         <h2>Available Endpoints:</h2>
         <a href="/psx-data">📊 Get All Stock Data</a>
         <a href="/psx-live">📈 Get Live Stock Market Data</a>
         <a href="/filter?symbol=">📊 Get Data By Symbol in URL</a>
-        <p> for example : https://api.ripeinsight.com/filter?symbol=AKDSL </p>
+        <p> for example : https://api.ripeinsight.com/filter?symbol=AKDSL . Name of Symbol Must be Capital</p>
     </body>
     </html>
     """
