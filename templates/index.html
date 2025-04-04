@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Upload with Date Picker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        p {
+            color: #666;
+            text-align: center;
+            max-width: 600px;
+        }
+
+        form {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        label {
+            font-weight: bold;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        input[type="date"],
+        input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        @media (max-width: 600px) {
+            form {
+                width: 90%;
+            }
+        }
+    </style>
+    <script>
+        function formatDate() {
+            let dateInput = document.getElementById("date");
+            let formattedDate = document.getElementById("formatted-date");
+
+            // Convert YYYY-MM-DD to DD-MM-YYYY
+            let dateValue = dateInput.value;
+            if (dateValue) {
+                let parts = dateValue.split("-");
+                formattedDate.value = `${parts[2]}-${parts[1]}-${parts[0]}`;
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <h1>Manual Conversion of .Lis to SQL</h1>
+    <p>DATE adjusted in the SQL as entered</p>
+    <p>Go to <a href="https://dps.psx.com.pk/downloads" target="_blank">PSX Downloads</a> and download the Market Closing Summary (ZIP).</p>
+
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <label for="date">Select Date:</label>
+        <input type="date" id="date" required onchange="formatDate()">
+        <input type="hidden" name="date" id="formatted-date">
+        
+        <label for="file">Upload File:</label>
+        <input type="file" id="file" name="file" required>
+        
+        <button type="submit">Upload</button>
+    </form>
+
+</body>
+</html>
