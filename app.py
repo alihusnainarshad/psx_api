@@ -1,329 +1,129 @@
-import sqlite3
-import time
-import requests
-import threading
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
-from bs4 import BeautifulSoup
-from difflib import get_close_matches
-from datetime import datetime, timedelta
-import pytz
+from flask import Flask, render_template, request, redirect, url_for, send_file
+import os
+import datetime
+import gzip
+import shutil
+import zipfile
 
-# Define Pakistan Standard Time (PST)
-PKT = pytz.timezone("Asia/Karachi")
+app = Flask(__name__)
 
-app = FastAPI()
+UPLOAD_FOLDER = "uploads"
+EXTRACT_FOLDER = "extracted"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(EXTRACT_FOLDER, exist_ok=True)
 
-PSX_MARKET_URL = "https://dps.psx.com.pk/market-watch"
-PSX_SYMBOLS_URL = "https://dps.psx.com.pk/symbols"
-DB_NAME = "psx_data.db"
+TABLE_NAME = "stock_data"
 
-# === Initialize SQLite Database ===
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS stock_data (
-            SYMBOL TEXT PRIMARY KEY,
-            SECTOR TEXT,
-            LISTED_IN TEXT,
-            LDCP TEXT,
-            OPEN TEXT,
-            HIGH TEXT,
-            LOW TEXT,
-            CURRENT TEXT,
-            CHANGE TEXT,
-            CHANGE_PERCENT TEXT,
-            VOLUME TEXT,
-            NAME TEXT,
-            SECTOR_NAME TEXT,
-            IS_ETF TEXT,
-            IS_DEBT TEXT,
-            LAST_UPDATED TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.commit()
-    conn.close()
+@app.route("/")
+def index():
+    return render_template("index.html")
 
-# === Fetch Market Data from PSX ===
-def fetch_market_data():
-    response = requests.get(PSX_MARKET_URL, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(response.content, "html.parser")
-    
-    table = soup.find("table")
-    rows = table.find_all("tr")[1:]
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    if "file" not in request.files:
+        return "No file uploaded!"
 
-    stock_data = {}
-    for row in rows:
-        cols = [col.text.strip() for col in row.find_all("td")]
-        if len(cols) >= 11:
-            symbol = cols[0]  # Stock symbol from market-watch
-            stock_data[symbol] = {
-                "SYMBOL": symbol,
-                "SECTOR": cols[1],
-                "LISTED_IN": cols[2],
-                "LDCP": cols[3],
-                "OPEN": cols[4],
-                "HIGH": cols[5],
-                "LOW": cols[6],
-                "CURRENT": cols[7],
-                "CHANGE": cols[8],
-                "CHANGE_PERCENT": cols[9],
-                "VOLUME": cols[10],
-                "NAME": "",
-                "SECTOR_NAME": "",
-                "IS_ETF": "",
-                "IS_DEBT": ""
-            }
-    return stock_data
+    file = request.files["file"]
+    if file.filename == "":
+        return "No selected file!"
 
-# === Fetch Symbol Data from PSX ===
-def fetch_symbol_data():
-    response = requests.get(PSX_SYMBOLS_URL, headers={"User-Agent": "Mozilla/5.0"})
-    return response.json()
+    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(file_path)
 
-# === Merge Market and Symbol Data ===
-def merge_data():
-    market_data = fetch_market_data()
-    symbol_data = fetch_symbol_data()
+    # Get user-selected date in DD-MM-YYYY format
+    selected_date = request.form.get("date", datetime.datetime.today().strftime("%d-%m-%Y"))
 
-    for symbol_info in symbol_data:
-        main_symbol = symbol_info["symbol"]
-        close_matches = get_close_matches(main_symbol, market_data.keys(), n=1, cutoff=0.6)
+    # Extract .lis file
+    lis_file_path = extract_lis(file_path)
 
-        if close_matches:
-            matched_symbol = close_matches[0]
-            market_data[matched_symbol].update({
-                "NAME": symbol_info.get("name", ""),
-                "SECTOR_NAME": symbol_info.get("sectorName", ""),
-                "IS_ETF": symbol_info.get("isETF", ""),
-                "IS_DEBT": symbol_info.get("isDebt", "")
-            })
+    if not lis_file_path:
+        return "Failed to extract .lis file from the compressed archive."
 
-    return market_data
+    # Convert LIS to SQL
+    sql_file_name = convert_lis_to_sql(lis_file_path, selected_date)
 
-# === Save Data to SQLite Database ===
-def save_to_db(data):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    timestamp = datetime.now().astimezone(PKT).strftime("%Y-%m-%d %H:%M:%S %Z")
+    return redirect(url_for("download_file", filename=sql_file_name))
 
-    for stock in data.values():
-        cursor.execute("""
-            INSERT INTO stock_data (SYMBOL, SECTOR, LISTED_IN, LDCP, OPEN, HIGH, LOW, CURRENT, CHANGE, CHANGE_PERCENT, VOLUME, NAME, SECTOR_NAME, IS_ETF, IS_DEBT, LAST_UPDATED)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(SYMBOL) DO UPDATE SET
-                SECTOR=excluded.SECTOR,
-                LISTED_IN=excluded.LISTED_IN,
-                LDCP=excluded.LDCP,
-                OPEN=excluded.OPEN,
-                HIGH=excluded.HIGH,
-                LOW=excluded.LOW,
-                CURRENT=excluded.CURRENT,
-                CHANGE=excluded.CHANGE,
-                CHANGE_PERCENT=excluded.CHANGE_PERCENT,
-                VOLUME=excluded.VOLUME,
-                NAME=excluded.NAME,
-                SECTOR_NAME=excluded.SECTOR_NAME,
-                IS_ETF=excluded.IS_ETF,
-                IS_DEBT=excluded.IS_DEBT,
-                LAST_UPDATED=excluded.LAST_UPDATED
-        """, (
-            stock["SYMBOL"], stock["SECTOR"], stock["LISTED_IN"], stock["LDCP"], stock["OPEN"], 
-            stock["HIGH"], stock["LOW"], stock["CURRENT"], stock["CHANGE"], stock["CHANGE_PERCENT"], 
-            stock["VOLUME"], stock["NAME"], stock["SECTOR_NAME"], stock["IS_ETF"], stock["IS_DEBT"], timestamp
-        ))
-    
-    conn.commit()
-    conn.close()
+def extract_lis(file_path):
+    """ Detects and extracts LIS file from .Z or .ZIP archive """
+    try:
+        if zipfile.is_zipfile(file_path):  # If it's a ZIP file
+            with zipfile.ZipFile(file_path, "r") as zip_ref:
+                for file in zip_ref.namelist():
+                    if file.endswith(".lis"):
+                        extracted_path = os.path.join(EXTRACT_FOLDER, file)
+                        zip_ref.extract(file, EXTRACT_FOLDER)
+                        return extracted_path
+        else:  # If it's a true .Z file
+            lis_filename = os.path.basename(file_path).replace(".Z", ".lis")
+            lis_file_path = os.path.join(EXTRACT_FOLDER, lis_filename)
 
-# === Fetch Data from DB ===
-def get_data_from_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
-    last_updated = cursor.fetchone()[0]
+            with gzip.open(file_path, "rb") as f_in:
+                with open(lis_file_path, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
 
-    # Convert to Pakistan Standard Time
-    if last_updated:
-        last_updated = datetime.strptime(last_updated, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.UTC).astimezone(PKT).strftime("%Y-%m-%d %H:%M:%S %Z")
+            return lis_file_path if os.path.exists(lis_file_path) else None
+    except Exception as e:
+        print(f"Error Extracting .lis: {str(e)}")
+        return None
 
-    cursor.execute("SELECT * FROM stock_data ORDER BY SYMBOL")
-    columns = [desc[0] for desc in cursor.description]
-    data = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    
-    conn.close()
-    return {
-        "last_updated": last_updated,
-        "stocks": data
-    }
+def convert_lis_to_sql(file_path, selected_date):
+    sql_file_name = f"{selected_date}.sql"
 
-# === Background Task: Fetch & Save Data ===
-def update_psx_data():
-    while True:
-        # Get current time in PKT
-        now = datetime.now(PKT)
-
-        # Fetch data immediately on deployment
-        print("Fetching PSX data on startup...")
-        stock_data = merge_data()
-        save_to_db(stock_data)
-        print(f"Initial PSX Data Updated at: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        # Define the next update time (Today at 6 PM PKT)
-        next_update = now.replace(hour=18, minute=0, second=0, microsecond=0)
-
-        # If the current time is past 6 PM, schedule it for the next day
-        if now >= next_update:
-            next_update += timedelta(days=1)
-
-        # Calculate sleep time until next update
-        sleep_time = (next_update - now).total_seconds()
-
-        print(f"Next update scheduled at: {next_update.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        time.sleep(sleep_time)  # Sleep until 6 PM PKT
-
-# === Start Background Task in a Separate Thread ===
-threading.Thread(target=update_psx_data, daemon=True).start()
-
-# === API Endpoints ===
-
-@app.get("/", response_class=HTMLResponse)
-def root():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    # Fetch last updated timestamp
-    cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
-    last_updated = cursor.fetchone()[0] or "N/A"
-
-    conn.close()
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>PSX Stock Data API</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; text-align: center; padding: 20px; }}
-            h1 {{ color: #007BFF; }}
-            a {{ text-decoration: none; color: #0056b3; font-size: 18px; display: block; margin: 10px 0; }}
-            a:hover {{ color: #003d7a; }}
-        </style>
-    </head>
-    <body>
-        <h1>Welcome to the PSX Stock Data API</h1>
-        <p><strong>Last Updated:</strong> {last_updated}</p>
-        <p> Data Is Updated Everyday at 6 PM Pakistan Time </p>
-        <h2>Available Endpoints:</h2>
-        <a href="/psx-data">📊 Get All Stock Data</a>
-        <a href="/psx-live">📈 Get Live Stock Market Data</a>
-        <a href="/filter?symbol=">📊 Get Data By Symbol in URL</a>
-        <p> for example : https://api.ripeinsight.com/filter?symbol=AKDSL . Name of Symbol Must be Capital</p>
-    </body>
-    </html>
+    TABLE_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        date VARCHAR(10),  
+        symbol TEXT,
+        open_price FLOAT,
+        high FLOAT,
+        low FLOAT,
+        close FLOAT,
+        volume INT,
+        ldcp FLOAT,
+        UNIQUE(date, symbol)
+    );
     """
 
-    return HTMLResponse(content=html_content)
+    sql_statements = [TABLE_SCHEMA]
 
+    with open(file_path, "r") as file:
+        for line in file:
+            values = line.strip().split("|")
+            if len(values) >= 10:
+                _, symbol, _, _, open_price, high, low, close, volume, ldcp = values[:10]
 
-@app.get("/psx-data")
-def fetch_psx_data():
-    return get_data_from_db()
+                open_price = float(open_price) if open_price else 0.0
+                high = float(high) if high else 0.0
+                low = float(low) if low else 0.0
+                close = float(close) if close else 0.0
+                volume = int(volume) if volume else 0
+                ldcp = float(ldcp) if ldcp else 0.0
 
-@app.get("/psx-last-updated")
-def get_last_updated():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+                sql_statements.append(
+                    f"""
+                    INSERT INTO {TABLE_NAME} (date, symbol, open_price, high, low, close, volume, ldcp)
+                    VALUES ('{selected_date}', '{symbol}', {open_price}, {high}, {low}, {close}, {volume}, {ldcp})
+                    ON DUPLICATE KEY UPDATE 
+                        open_price = VALUES(open_price),
+                        high = VALUES(high),
+                        low = VALUES(low),
+                        close = VALUES(close),
+                        volume = VALUES(volume),
+                        ldcp = VALUES(ldcp);
+                    """
+                )
 
-    cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
-    last_updated = cursor.fetchone()[0]
+    sql_file_path = os.path.join(UPLOAD_FOLDER, sql_file_name)
+    with open(sql_file_path, "w") as sql_file:
+        sql_file.write("\n".join(sql_statements))
 
-    conn.close()
-    return {"last_updated": last_updated}
+    return sql_file_name
 
+@app.route("/download/<filename>")
+def download_file(filename):
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    return send_file(file_path, as_attachment=True)
 
-@app.get("/psx-live")
-def fetch_psx_live():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
-    last_updated = cursor.fetchone()[0]
-
-    # Fetch required fields from the stock_data table
-    cursor.execute("""
-        SELECT SYMBOL, LDCP, OPEN, HIGH, LOW, CURRENT, CHANGE, CHANGE_PERCENT, VOLUME, NAME
-        FROM stock_data
-        ORDER BY SYMBOL
-    """)
-
-    stocks = []
-    for row in cursor.fetchall():
-        stocks.append({
-            "SMBL": row[0],
-            "NAME": row[9],
-            "OPEN": row[2],
-            "HIGH": row[3],
-            "LOW": row[4],
-            "CURRENT": row[5],
-            "CHNG": row[6],
-            "CHNG_%": row[7],
-            "VOL": row[8],
-            "LDCP": row[1]
-        })
-
-    conn.close()
-    return {
-        "last_updated": last_updated,
-        "stocks": stocks
-    }
-
-# === Fetch Filtered Data from DB ===
-
-@app.get("/filter")
-def filter_stock(symbol: str = Query(..., description="Stock symbol to filter")):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT MAX(LAST_UPDATED) FROM stock_data")
-    last_updated = cursor.fetchone()[0]
-
-    cursor.execute("""
-        SELECT SYMBOL, SECTOR, LISTED_IN, LDCP, OPEN, HIGH, LOW, CURRENT, CHANGE, 
-               CHANGE_PERCENT, VOLUME, NAME, SECTOR_NAME, IS_ETF, IS_DEBT, LAST_UPDATED
-        FROM stock_data
-        WHERE SYMBOL = ?
-    """, (symbol,))
-
-    row = cursor.fetchone()
-    conn.close()
-
-    if row:
-        stock_data = {
-            "SYMBOL": row[0],
-            "SECTOR": row[1],
-            "LISTED_IN": row[2],
-            "LDCP": row[3],
-            "OPEN": row[4],
-            "HIGH": row[5],
-            "LOW": row[6],
-            "CURRENT": row[7],
-            "CHANGE": row[8],
-            "CHANGE_PERCENT": row[9],
-            "VOLUME": row[10],
-            "NAME": row[11],
-            "SECTOR_NAME": row[12],
-            "IS_ETF": row[13],
-            "IS_DEBT": row[14],
-            "LAST_UPDATED": row[15]
-        }
-        return {"stock": stock_data}
-    else:
-        return {"error": "Stock symbol not found"}
-  
-
-# === Initialize DB on Startup ===
-init_db()
+if __name__ == "__main__":
+    app.run(debug=True)
